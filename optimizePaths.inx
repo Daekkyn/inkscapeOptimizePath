@@ -1,0 +1,18 @@
+<inkscape-extension>
+   <_name>Optimize Paths</_name>
+   <id>org.daekkyn.filter.optimizePaths</id>
+       <dependency type="executable" location="extensions">optimizePaths.py</dependency>
+       <dependency type="executable" location="extensions">inkex.py</dependency>
+     	 <param name="tolerance" type="float" min="0.0" max="100.0" _gui-text="Merge Tolerance:">0.10</param>
+       <param name="enableLog" type="boolean" _gui-text="Debug">false</param>
+
+   <effect>
+               <object-type>path</object-type>
+                <effects-menu>
+                    <submenu _name="Modify Path"/>
+                </effects-menu>
+   </effect>
+   <script>
+       <command reldir="extensions" interpreter="python">optimizePaths.py</command>
+   </script>
+</inkscape-extension>
