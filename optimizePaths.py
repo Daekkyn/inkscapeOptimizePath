@@ -19,9 +19,87 @@ Foundation, Inc., 51 Franklin St Fifth Floor, Boston, MA 02139
 import inkex, simplepath, simplestyle
 import sys
 import math
-import networkx as nx
 import random
 import colorsys
+import os
+#Trick to allow placing symbolic links in the inkscape extension folder
+#sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+#import networkx as nx
+
+class Graph:
+    def __init__(self):
+        self.__adj = {}
+        self.__data = {}
+
+    def __str__(self):
+        return str(self.__adj)
+
+    def nodes(self):
+        nodes = []
+        for n in self.__adj:
+            nodes.append(n)
+        return nodes
+
+    def edges(self):
+        edges = []
+        for n1 in self.__adj:
+            for n2 in self.neighbours(n1):
+                edges.append((n1, n2))
+        return edges
+
+    def node(self, n):
+        if n in self.__adj:
+            return self.__data[n]
+        else:
+            raise ValueError('Inexistant node')
+
+    def neighbours(self, n):
+        if n in self.__adj:
+            return self.__adj[n]
+        else:
+            raise ValueError('Inexistant node')
+
+    def degree(self, n):
+        if n in self.__adj:
+            return len(self.__adj[n])
+        else:
+            raise ValueError('Inexistant node')
+
+    def addNode(self, n, data):
+        if n not in self.__adj:
+            self.__adj[n] = []
+            self.__data[n] = data
+        else:
+            raise ValueError('Node already exists')
+
+    def removeNode(self, n):
+        if n in self.__adj:
+            #Remove all edges pointing to node
+            for n2 in self.__adj:
+                neighbours = self.__adj[n2]
+                if n in neighbours:
+                    neighbours.remove(n)
+            del self.__adj[n]
+            del self.__data[n]
+        else:
+            raise ValueError('Removing inexistant node')
+
+    def addEdge(self, n1, n2):
+        if(n1 in self.__adj and n2 in self.__adj):
+            self.__adj[n1].append(n2)
+            self.__adj[n2].append(n1)
+        else:
+            raise ValueError('Adding edge to inexistant node')
+
+    def removeEdge(self, n1, n2):
+        if(n1 in self.__adj and n2 in self.__adj and
+        n2 in self.__adj[n1] and n1 in self.__adj[n2]):
+            self.__adj[n1].remove(n2)
+            self.__adj[n2].remove(n1)
+        else:
+            raise ValueError('Removing inexistant edge')
+
+
 
 class OptimizePaths(inkex.Effect):
     def __init__(self):
@@ -83,18 +161,19 @@ class OptimizePaths(inkex.Effect):
         return (vertices, edges)
 
     def buildGraph(self, vertices, edges):
-        G = nx.Graph()
+        G = Graph()
         for i, v in enumerate(vertices):
-            G.add_node(i, x=v[0], y=v[1])
             self.log("N "+ str(i) + " (" + str(v[0]) + "," + str(v[1]) + ")")
+            G.addNode(i, (v[0], v[1]))
+        self.log(G)
         for e in edges:
-            G.add_edge(e[0], e[1])
             self.log("E "+str(e[0]) + " " + str(e[1]))
+            G.addEdge(e[0], e[1])
         return G
 
     @staticmethod
     def dist(a, b):
-        return math.sqrt( (a['x'] - b['x'])**2 + (a['y'] - b['y'])**2 )
+        return math.sqrt( (a[0] - b[0])**2 + (a[1] - b[1])**2 )
 
     def log(self, message):
         if(self.options.enableLog):
@@ -103,20 +182,20 @@ class OptimizePaths(inkex.Effect):
     def mergeWithTolerance(self, G, tolerance):
         mergeTo = {}
         for ni in G.nodes():
-            node_i = G.node[ni]
+            node_i_data = G.node(ni)
             for nj in G.nodes():
                 if nj <= ni :
                     continue
                 #self.log("Test " + str(ni) + " with " + str(nj))
-                node_j = G.node[nj]
-                dist_ij = self.dist(node_i, node_j)
+                node_j_data = G.node(nj)
+                dist_ij = self.dist(node_i_data, node_j_data)
                 if (dist_ij < tolerance) and (nj not in mergeTo) and (ni not in mergeTo):
                     self.log("Merge " + str(nj) + " with " + str(ni) + " (dist="+str(dist_ij)+")")
                     mergeTo[nj] = ni
 
         for n in mergeTo:
             newEdges = []
-            for neigh_n in G[n]:
+            for neigh_n in G.neighbours(n):
                 newEdge = None
                 if neigh_n in mergeTo:
                     newEdge = (mergeTo[n], mergeTo[neigh_n])
@@ -127,9 +206,9 @@ class OptimizePaths(inkex.Effect):
                     newEdges.append(newEdge)
 
             for e in newEdges:
-                G.add_edge(e[0], e[1])
+                G.addEdge(e[0], e[1])
                 self.log("Added edge: "+str(e[0]) + " " + str(e[1]))
-            G.remove_node(n)
+            G.removeNode(n)
             self.log("Removed node: " + str(n))
 
     @staticmethod
@@ -150,26 +229,24 @@ class OptimizePaths(inkex.Effect):
     def graphToSVG(self, G):
         parent = self.current_layer
         path = []
-        dfsEdges = []
+        dfsEdges = G.edges()
 
-        for e in nx.edge_dfs(G):
-            dfsEdges.append(e)
 
         if self.options.splitSubPaths:
             group = inkex.etree.SubElement(parent, inkex.addNS('g','svg'))
             for i,e in enumerate(dfsEdges):
-                node_i = G.node[e[0]]
-                node_j = G.node[e[1]]
+                node_i_data = G.node(e[0])
+                node_j_data = G.node(e[1])
 
                 #Path ends either at the last edge or when the next edge starts somewhere else
                 endPath = (i == len(dfsEdges)-1 or e[1] != dfsEdges[i+1][0])
 
                 if(not path):
-                    path.append(['M', (node_i['x'], node_i['y'])])
-                    path.append(['L', (node_j['x'], node_j['y'])])
+                    path.append(['M', (node_i_data[0], node_i_data[1])])
+                    path.append(['L', (node_j_data[0], node_j_data[1])])
 
                 else:
-                    path.append(['L', (node_j['x'], node_j['y'])])
+                    path.append(['L', (node_j_data[0], node_j_data[1])])
 
                 if endPath:
                     self.addPathToInkscape(path, group)
@@ -179,14 +256,14 @@ class OptimizePaths(inkex.Effect):
             prevEdge = None
 
             for e in nx.edge_dfs(G):
-                node_i = G.node[e[0]]
-                node_j = G.node[e[1]]
+                node_i_data = G.node[e[0]]
+                node_j_data = G.node[e[1]]
 
                 if (prevEdge == None or prevEdge[1] != e[0]):
-                    path.append(['M', (node_i['x'], node_i['y'])])
-                    path.append(['L', (node_j['x'], node_j['y'])])
+                    path.append(['M', (node_i_data[0], node_i_data[1])])
+                    path.append(['L', (node_j_data[0], node_j_data[1])])
                 else:
-                    path.append(['L', (node_j['x'], node_j['y'])])
+                    path.append(['L', (node_j_data[0], node_j_data[1])])
 
                 prevEdge = e
 
@@ -199,7 +276,7 @@ class OptimizePaths(inkex.Effect):
         self.log("Number of edges: "+str(len(edges)))
 
         self.mergeWithTolerance(G, self.options.tolerance)
-        self.log("Number of edges after cleaning: "+str(G.number_of_edges()))
+        #self.log("Number of edges after cleaning: "+str(G.number_of_edges()))
 
         for e in G.edges():
             self.log("E "+str(e[0]) + " " + str(e[1]))
