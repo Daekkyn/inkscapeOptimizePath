@@ -22,9 +22,6 @@ import math
 import random
 import colorsys
 import os
-#Trick to allow placing symbolic links in the inkscape extension folder
-#sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-#import networkx as nx
 
 class Graph:
     def __init__(self):
@@ -44,7 +41,8 @@ class Graph:
         edges = []
         for n1 in self.__adj:
             for n2 in self.neighbours(n1):
-                edges.append((n1, n2))
+                if((n2, n1) not in edges):
+                    edges.append((n1, n2))
         return edges
 
     def node(self, n):
@@ -58,6 +56,12 @@ class Graph:
             return self.__adj[n]
         else:
             raise ValueError('Inexistant node')
+
+    def outEdges(self, n):
+        edges = []
+        for n2 in self.neighbours(n):
+            edges.append((n, n2))
+        return edges
 
     def degree(self, n):
         if n in self.__adj:
@@ -98,6 +102,41 @@ class Graph:
             self.__adj[n2].remove(n1)
         else:
             raise ValueError('Removing inexistant edge')
+
+    def dfsEdges(self):
+        nodes = self.nodes()
+        visitedEdges = set()
+        visitedNodes = set()
+        edges = {}
+        dfsEdges = []
+
+        for startNode in nodes:
+            if self.degree(startNode) != 1:
+                continue#Makes sure we don't start in the middle of a path
+            stack = [startNode]
+            prevEdge = None
+            while stack:
+                currentNode = stack[-1]
+                if currentNode not in visitedNodes:
+                    edges[currentNode] = self.outEdges(currentNode)
+                    visitedNodes.add(currentNode)
+
+                if edges[currentNode]:
+                    edge = edges[currentNode][-1]
+                    if edge not in visitedEdges and (edge[1], edge[0]) not in visitedEdges:
+                        visitedEdges.add(edge)
+                        # Mark the traversed "to" node as to-be-explored.
+                        stack.append(edge[1])
+                        dfsEdges.append(edge)
+                        prevEdge = edge
+                    edges[currentNode].pop()
+                else:
+                    # No more edges from the current node.
+                    stack.pop()
+                    prevEdge = None
+
+
+        return dfsEdges
 
 
 
@@ -229,7 +268,7 @@ class OptimizePaths(inkex.Effect):
     def graphToSVG(self, G):
         parent = self.current_layer
         path = []
-        dfsEdges = G.edges()
+        dfsEdges = G.dfsEdges()
 
 
         if self.options.splitSubPaths:
@@ -237,6 +276,7 @@ class OptimizePaths(inkex.Effect):
             for i,e in enumerate(dfsEdges):
                 node_i_data = G.node(e[0])
                 node_j_data = G.node(e[1])
+                self.log("DFS "+str(e[0]) + " " + str(e[1]))
 
                 #Path ends either at the last edge or when the next edge starts somewhere else
                 endPath = (i == len(dfsEdges)-1 or e[1] != dfsEdges[i+1][0])
@@ -255,9 +295,9 @@ class OptimizePaths(inkex.Effect):
         else:
             prevEdge = None
 
-            for e in nx.edge_dfs(G):
-                node_i_data = G.node[e[0]]
-                node_j_data = G.node[e[1]]
+            for e in dfsEdges:
+                node_i_data = G.node(e[0])
+                node_j_data = G.node(e[1])
 
                 if (prevEdge == None or prevEdge[1] != e[0]):
                     path.append(['M', (node_i_data[0], node_i_data[1])])
