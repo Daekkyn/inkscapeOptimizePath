@@ -20,6 +20,8 @@ import inkex, simplepath, simplestyle
 import sys
 import math
 import networkx as nx
+import random
+import colorsys
 
 class OptimizePaths(inkex.Effect):
     def __init__(self):
@@ -32,6 +34,10 @@ class OptimizePaths(inkex.Effect):
                         action="store", type="inkbool",
                         dest="enableLog", default=False,
                         help="Enable logging")
+        self.OptionParser.add_option("-s", "--splitSubPaths",
+                        action="store", type="inkbool",
+                        dest="splitSubPaths", default=False,
+                        help="Split sub-paths")
 
     def parseSVG(self):
         vertices = []
@@ -61,7 +67,6 @@ class OptimizePaths(inkex.Effect):
                         previousVertex = startVertex
                     elif (command == 'C' or command == 'S' or command == 'Q' or
                     command == 'T' or command == 'A'):
-                        self.log("C: " + str(tcoords))
                         endCoords = (tcoords[-2], tcoords[-1])
                         vertices.append(endCoords)
                         currentVertex = len(vertices)-1
@@ -127,28 +132,66 @@ class OptimizePaths(inkex.Effect):
             G.remove_node(n)
             self.log("Removed node: " + str(n))
 
+    @staticmethod
+    def rgbToHex(rgb):
+        return '#%02x%02x%02x' % rgb
+
+    #Color should be in hex format ("#RRGGBB"), if not specified a random color will be generated
+    def addPathToInkscape(self, path, parent, color=None):
+        if(color is None):
+            color = colorsys.hsv_to_rgb(random.uniform(0.0, 1.0), 1.0, 1.0)
+            color = tuple(x * 255 for x in color)
+            color = self.rgbToHex( color )
+
+        style = "stroke:"+color+";stroke-width:2;fill:none;"
+        attribs = {'style': style, 'd': simplepath.formatPath(path) }
+        inkex.etree.SubElement(parent, inkex.addNS('path','svg'), attribs )
 
     def graphToSVG(self, G):
         parent = self.current_layer
-        style = {'stroke': '#FF0000','stroke-width': '2', 'fill': 'none'}
-        prevEdge = None
         path = []
+        dfsEdges = []
 
         for e in nx.edge_dfs(G):
-            node_i = G.node[e[0]]
-            node_j = G.node[e[1]]
+            dfsEdges.append(e)
 
-            if (prevEdge == None or prevEdge[1] != e[0]):
-                path.append(['M', (node_i['x'], node_i['y'])])
-                path.append(['L', (node_j['x'], node_j['y'])])
-            else:
-                path.append(['L', (node_j['x'], node_j['y'])])
+        if self.options.splitSubPaths:
+            group = inkex.etree.SubElement(parent, inkex.addNS('g','svg'))
+            for i,e in enumerate(dfsEdges):
+                node_i = G.node[e[0]]
+                node_j = G.node[e[1]]
 
-            prevEdge = e
+                #Path ends either at the last edge or when the next edge starts somewhere else
+                endPath = (i == len(dfsEdges)-1 or e[1] != dfsEdges[i+1][0])
 
-        attribs = {'style': simplestyle.formatStyle(style),
-                    'd': simplepath.formatPath(path) }
-        inkex.etree.SubElement(parent, inkex.addNS('path','svg'), attribs )
+                if(not path):
+                    path.append(['M', (node_i['x'], node_i['y'])])
+                    path.append(['L', (node_j['x'], node_j['y'])])
+
+                else:
+                    path.append(['L', (node_j['x'], node_j['y'])])
+
+                if endPath:
+                    self.addPathToInkscape(path, group)
+                    path = []
+
+        else:
+            prevEdge = None
+
+            for e in nx.edge_dfs(G):
+                node_i = G.node[e[0]]
+                node_j = G.node[e[1]]
+
+                if (prevEdge == None or prevEdge[1] != e[0]):
+                    path.append(['M', (node_i['x'], node_i['y'])])
+                    path.append(['L', (node_j['x'], node_j['y'])])
+                else:
+                    path.append(['L', (node_j['x'], node_j['y'])])
+
+                prevEdge = e
+
+            self.addPathToInkscape(path, parent, "#FF0000")
+
 
     def effect(self):
         (vertices, edges) = self.parseSVG()
