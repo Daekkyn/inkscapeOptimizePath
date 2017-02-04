@@ -22,6 +22,7 @@ import math
 import random
 import colorsys
 import os
+import numpy
 
 class Graph:
     def __init__(self):
@@ -103,6 +104,17 @@ class Graph:
         else:
             raise ValueError('Removing inexistant edge')
 
+    def __getOutEdgesSortedByAngle(self, previousEdge):
+        previousEdgeVectNormalized = numpy.array(self.node(previousEdge[1])) - numpy.array(self.node(previousEdge[0]))
+        previousEdgeVectNormalized = previousEdgeVectNormalized/numpy.linalg.norm(previousEdgeVectNormalized)
+        #previousEdgeVectNormalized = numpy.array((0,1))
+        def angleKey(outEdge):
+            edgeVectNormalized = numpy.array(self.node(outEdge[1])) - numpy.array(self.node(outEdge[0]))
+            edgeVectNormalized = edgeVectNormalized/numpy.linalg.norm(edgeVectNormalized)
+            return numpy.dot(previousEdgeVectNormalized, edgeVectNormalized)
+
+        return sorted(self.outEdges(previousEdge[1]), key=angleKey)
+
     def dfsEdges(self):
         nodes = self.nodes()
         visitedEdges = set()
@@ -111,14 +123,17 @@ class Graph:
         dfsEdges = []
 
         for startNode in nodes:
-            if self.degree(startNode) != 1:
-                continue#Makes sure we don't start in the middle of a path
+            #if self.degree(startNode) != 1:
+                #continue#Makes sure we don't start in the middle of a path
             stack = [startNode]
             prevEdge = None
             while stack:
                 currentNode = stack[-1]
                 if currentNode not in visitedNodes:
-                    edges[currentNode] = self.outEdges(currentNode)
+                    if(prevEdge):
+                        edges[currentNode] = self.__getOutEdgesSortedByAngle(prevEdge)
+                    else:
+                        edges[currentNode] = self.outEdges(currentNode)
                     visitedNodes.add(currentNode)
 
                 if edges[currentNode]:
@@ -210,9 +225,9 @@ class OptimizePaths(inkex.Effect):
             G.addEdge(e[0], e[1])
         return G
 
-    @staticmethod
-    def dist(a, b):
-        return math.sqrt( (a[0] - b[0])**2 + (a[1] - b[1])**2 )
+    #@staticmethod
+    #def dist(a, b):
+        #return math.sqrt( (a[0] - b[0])**2 + (a[1] - b[1])**2 )
 
     def log(self, message):
         if(self.options.enableLog):
@@ -227,7 +242,7 @@ class OptimizePaths(inkex.Effect):
                     continue
                 #self.log("Test " + str(ni) + " with " + str(nj))
                 node_j_data = G.node(nj)
-                dist_ij = self.dist(node_i_data, node_j_data)
+                dist_ij = numpy.linalg.norm(numpy.array(node_i_data) - numpy.array(node_j_data))
                 if (dist_ij < tolerance) and (nj not in mergeTo) and (ni not in mergeTo):
                     self.log("Merge " + str(nj) + " with " + str(ni) + " (dist="+str(dist_ij)+")")
                     mergeTo[nj] = ni
@@ -265,49 +280,49 @@ class OptimizePaths(inkex.Effect):
         attribs = {'style': style, 'd': simplepath.formatPath(path) }
         inkex.etree.SubElement(parent, inkex.addNS('path','svg'), attribs )
 
-    def graphToSVG(self, G):
-        parent = self.current_layer
+    def edgesToPaths(self, edges):
+        paths = []
         path = []
-        dfsEdges = G.dfsEdges()
+        for i,e in enumerate(edges):
+            #Path ends either at the last edge or when the next edge starts somewhere else
+            endPath = (i == len(edges)-1 or e[1] != edges[i+1][0])
 
+            if(not path):
+                path.append(e[0])
+                path.append(e[1])
 
+            else:
+                path.append(e[1])
+
+            if endPath:
+                paths.append(path)
+                path = []
+        return paths
+
+    def graphToSVG(self, G):
+        parent = None
         if self.options.splitSubPaths:
-            group = inkex.etree.SubElement(parent, inkex.addNS('g','svg'))
-            for i,e in enumerate(dfsEdges):
-                node_i_data = G.node(e[0])
-                node_j_data = G.node(e[1])
-                self.log("DFS "+str(e[0]) + " " + str(e[1]))
-
-                #Path ends either at the last edge or when the next edge starts somewhere else
-                endPath = (i == len(dfsEdges)-1 or e[1] != dfsEdges[i+1][0])
-
-                if(not path):
-                    path.append(['M', (node_i_data[0], node_i_data[1])])
-                    path.append(['L', (node_j_data[0], node_j_data[1])])
-
-                else:
-                    path.append(['L', (node_j_data[0], node_j_data[1])])
-
-                if endPath:
-                    self.addPathToInkscape(path, group)
-                    path = []
-
+            parent = inkex.etree.SubElement(self.current_layer, inkex.addNS('g','svg'))
         else:
-            prevEdge = None
+            parent = self.current_layer
+        color = None if self.options.splitSubPaths else "#FF0000"
 
-            for e in dfsEdges:
-                node_i_data = G.node(e[0])
-                node_j_data = G.node(e[1])
+        paths = self.edgesToPaths(G.dfsEdges())
 
-                if (prevEdge == None or prevEdge[1] != e[0]):
-                    path.append(['M', (node_i_data[0], node_i_data[1])])
-                    path.append(['L', (node_j_data[0], node_j_data[1])])
+        #paths.sort(key=len, reverse=True)
+        #paths = paths[:10]
+
+        for path in paths:
+            svgPath = []
+            for i,n in enumerate(path):
+                nodePos = G.node(n)
+                command = None
+                if i==0:
+                    command = 'M'
                 else:
-                    path.append(['L', (node_j_data[0], node_j_data[1])])
-
-                prevEdge = e
-
-            self.addPathToInkscape(path, parent, "#FF0000")
+                    command = 'L'
+                svgPath.append([command, nodePos])
+            self.addPathToInkscape(svgPath, parent)
 
 
     def effect(self):
