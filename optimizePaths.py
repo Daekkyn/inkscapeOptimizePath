@@ -23,6 +23,7 @@ import random
 import colorsys
 import os
 import numpy
+import networkx as nx
 
 class Graph:
     def __init__(self):
@@ -104,16 +105,16 @@ class Graph:
         else:
             raise ValueError('Removing inexistant edge')
 
-    def __getOutEdgesSortedByAngle(self, previousEdge):
+    def __sortedEdgesByAngle(self, previousEdge, edges):
         previousEdgeVectNormalized = numpy.array(self.node(previousEdge[1])) - numpy.array(self.node(previousEdge[0]))
         previousEdgeVectNormalized = previousEdgeVectNormalized/numpy.linalg.norm(previousEdgeVectNormalized)
         #previousEdgeVectNormalized = numpy.array((0,1))
         def angleKey(outEdge):
             edgeVectNormalized = numpy.array(self.node(outEdge[1])) - numpy.array(self.node(outEdge[0]))
             edgeVectNormalized = edgeVectNormalized/numpy.linalg.norm(edgeVectNormalized)
-            return numpy.dot(previousEdgeVectNormalized, edgeVectNormalized)
+            return -numpy.dot(previousEdgeVectNormalized, edgeVectNormalized)
 
-        return sorted(self.outEdges(previousEdge[1]), key=angleKey)
+        return sorted(edges, key=angleKey)
 
     def dfsEdges(self):
         nodes = self.nodes()
@@ -130,21 +131,20 @@ class Graph:
             while stack:
                 currentNode = stack[-1]
                 if currentNode not in visitedNodes:
-                    if(prevEdge):
-                        edges[currentNode] = self.__getOutEdgesSortedByAngle(prevEdge)
-                    else:
-                        edges[currentNode] = self.outEdges(currentNode)
+                    edges[currentNode] = self.outEdges(currentNode)
                     visitedNodes.add(currentNode)
 
                 if edges[currentNode]:
-                    edge = edges[currentNode][-1]
+                    if(prevEdge):
+                        edges[currentNode] = self.__sortedEdgesByAngle(prevEdge, edges[currentNode])
+                    edge = edges[currentNode][0]
                     if edge not in visitedEdges and (edge[1], edge[0]) not in visitedEdges:
                         visitedEdges.add(edge)
                         # Mark the traversed "to" node as to-be-explored.
                         stack.append(edge[1])
                         dfsEdges.append(edge)
                         prevEdge = edge
-                    edges[currentNode].pop()
+                    edges[currentNode].pop(0)
                 else:
                     # No more edges from the current node.
                     stack.pop()
@@ -284,6 +284,12 @@ class OptimizePaths(inkex.Effect):
         paths = []
         path = []
         for i,e in enumerate(edges):
+            """if(not path and e[0] == -1):
+                continue
+            if e[1] == -1:
+                paths.append(path)
+                path = []
+                continue"""
             #Path ends either at the last edge or when the next edge starts somewhere else
             endPath = (i == len(edges)-1 or e[1] != edges[i+1][0])
 
@@ -307,10 +313,57 @@ class OptimizePaths(inkex.Effect):
             parent = self.current_layer
         color = None if self.options.splitSubPaths else "#FF0000"
 
-        paths = self.edgesToPaths(G.dfsEdges())
+        #paths = self.edgesToPaths(G.dfsEdges())
+
+        G2 = nx.MultiGraph()
+        for e in G.edges():
+            G2.add_edge(e[0], e[1])
+
+        oddVertices = []
+        for n in G2.nodes():
+            #self.log("Degree of "+str(n) + ": " + str(G2.degree(n)))
+            if G2.degree(n) % 2 != 0:
+                oddVertices.append(n)
+
+        pathsToDuplicate = []
+
+        while(oddVertices):
+            n1 = oddVertices[0]
+            shortestPaths = []
+            for n2 in oddVertices:
+                if n2 != n1:
+                    shortestPath = nx.shortest_path(G2, n1, n2)
+                    shortestPaths.append(shortestPath)
+                    if len(shortestPath) == 2:
+                        break#We won't find a path shorter than that
+            shortestShortestPath = min(shortestPaths, key=len)
+            closestNode = shortestShortestPath[-1]
+            pathsToDuplicate.append(shortestShortestPath)
+            oddVertices.pop(0)
+            oddVertices.remove(closestNode)
+
+        numberOfDuplicatedEdges = 0
+
+        for path in pathsToDuplicate:
+            numberOfDuplicatedEdges += len(path)-1
+            nx.add_path(G2,path)
+
+        self.log("Number of duplicated edges: " + str(numberOfDuplicatedEdges))
+
+        """shortestPaths = {}
+        for n1 in oddVertices:
+            shortestPaths[n1] = {}
+            for n2 in oddVertices:
+                if(n2 not n1 and n2 in shortestPaths):
+                    shortestPaths[n1][n2] = nx.shortest_path(n1, n2)"""
+
+
+        self.log("Eulerian? : " + str(nx.is_eulerian(G2)))
+        eulerianCircuit = list(nx.eulerian_circuit(G2))
+        paths = self.edgesToPaths(eulerianCircuit)
 
         #paths.sort(key=len, reverse=True)
-        #paths = paths[:10]
+        #paths = paths[:5]
 
         for path in paths:
             svgPath = []
@@ -328,17 +381,18 @@ class OptimizePaths(inkex.Effect):
     def effect(self):
         (vertices, edges) = self.parseSVG()
         G = self.buildGraph(vertices, edges)
-        self.log("Number of edges: "+str(len(edges)))
+        #self.log("Number of edges: "+str(len(edges)))
 
         self.mergeWithTolerance(G, self.options.tolerance)
         #self.log("Number of edges after cleaning: "+str(G.number_of_edges()))
 
-        for e in G.edges():
+        """for e in G.edges():
             self.log("E "+str(e[0]) + " " + str(e[1]))
         for n in G.nodes():
-            self.log("Degree of "+str(n) + ": " + str(G.degree(n)))
+            self.log("Degree of "+str(n) + ": " + str(G.degree(n)))"""
 
         self.graphToSVG(G)
+
 
 e = OptimizePaths()
 e.affect()
