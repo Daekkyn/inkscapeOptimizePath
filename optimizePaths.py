@@ -169,10 +169,10 @@ class OptimizePaths(inkex.Effect):
                         action="store", type="inkbool",
                         dest="enableLog", default=False,
                         help="Enable logging")
-        self.OptionParser.add_option("-a", "--allowMultigraph",
-                        action="store", type="inkbool",
-                        dest="allowMultigraph", default=True,
-                        help="Allowing passing edge multiple times")
+        self.OptionParser.add_option("-o", "--overwriteRule",
+                        action="store", type="int",
+                        dest="overwriteRule", default=1,
+                        help="Options to control edge overwrite rules")
         self.OptionParser.add_option("-s", "--splitSubPaths",
                         action="store", type="inkbool",
                         dest="splitSubPaths", default=False,
@@ -186,14 +186,11 @@ class OptimizePaths(inkex.Effect):
             if node.tag == inkex.addNS('path','svg'):
                 d = node.get('d')
                 path = simplepath.parsePath(d)
-                #start = prev = None
                 startVertex = previousVertex = None
 
                 for command, coords in path:
                     tcoords = tuple(coords)
-                    #self.log(command + " " + str(tcoords))
                     if command == 'M':
-                        #start = prev = tcoords
                         vertices.append(tcoords)
                         startVertex = previousVertex = len(vertices)-1
                     elif command == 'L':
@@ -211,13 +208,8 @@ class OptimizePaths(inkex.Effect):
                         currentVertex = len(vertices)-1
                         edges.append((previousVertex, currentVertex))
                         previousVertex = currentVertex
-
-            #elif node.tag == inkex.addNS('polygon','svg'):
-
-        #for v in vertices:
-            #self.log("Vertex: " + str(v))
-        #for e in edges:
-            #self.log("Edge: " + str(e))
+            else:
+                inkex.debug("This extension only works with paths and currently doesn't support groups")
 
         return (vertices, edges)
 
@@ -227,7 +219,7 @@ class OptimizePaths(inkex.Effect):
             G.add_node(i, x=v[0], y=v[1])
             self.log("N "+ str(i) + " (" + str(v[0]) + "," + str(v[1]) + ")")
         for e in edges:
-            G.add_edge(e[0], e[1])
+            G.add_edge(e[0], e[1], weight=2)
             self.log("E "+str(e[0]) + " " + str(e[1]))
         return G
 
@@ -286,6 +278,45 @@ class OptimizePaths(inkex.Effect):
         attribs = {'style': style, 'd': simplepath.formatPath(path) }
         inkex.etree.SubElement(parent, inkex.addNS('path','svg'), attribs )
 
+    def removeSomeEdges(self, G, edges):
+        visitedEdges = set()
+
+        #Contains a list of [start, end] where start is the start index of a duplicate path
+        #and end is the end index of the duplicate path
+        edgeRangeToRemove = []
+        isPrevEdgeDuplicate = False
+        for i,e in enumerate(edges):
+            isEdgeDuplicate = e in visitedEdges or (e[1],e[0]) in visitedEdges
+
+            if isEdgeDuplicate:
+                if not isPrevEdgeDuplicate:
+                    edgeRangeToRemove.append([i, 1])
+            else:
+                if isPrevEdgeDuplicate:
+                    edgeRangeToRemove[-1][1] = i-1
+
+                visitedEdges.add(e)
+
+            if isEdgeDuplicate and i == len(edges)-1:
+                edgeRangeToRemove[-1][1] = i
+
+            isPrevEdgeDuplicate = isEdgeDuplicate
+
+        if self.options.overwriteRule == 0: #Allow overwrite
+            #The last duplicate path can allways be removed
+            edgeRangeToRemove = [edgeRangeToRemove[-1]] if edgeRangeToRemove else []
+        elif self.options.overwriteRule == 1: #Allow overwrite except for long paths
+            edgeRangeToRemove = [x for x in edgeRangeToRemove if x[1]-x[0] > 3]
+
+
+        indicesToRemove = set()
+        for start, end in edgeRangeToRemove:
+            indicesToRemove.update(range(start, end+1))
+
+        cleanedEdges = [e for i, e in enumerate(edges) if i not in indicesToRemove]
+
+        return cleanedEdges
+
     def edgesToPaths(self, edges):
         paths = []
         path = []
@@ -297,7 +328,6 @@ class OptimizePaths(inkex.Effect):
             if(not path):
                 path.append(e[0])
                 path.append(e[1])
-
             else:
                 path.append(e[1])
 
@@ -307,12 +337,7 @@ class OptimizePaths(inkex.Effect):
         return paths
 
     def pathsToSVG(self, G, paths):
-        parent = self.current_layer
-        #if self.options.splitSubPaths:
-            #parent = inkex.etree.SubElement(self.current_layer, inkex.addNS('g','svg'))
-
-        color = None if self.options.splitSubPaths else "#FF0000"
-
+        svgPaths = []
         for path in paths:
             svgPath = []
             for i,n in enumerate(path):
@@ -323,77 +348,103 @@ class OptimizePaths(inkex.Effect):
                 else:
                     command = 'L'
                 svgPath.append([command, (node_i_data['x'], node_i_data['y'])])
+            svgPaths.append(svgPath)
+
+        if self.options.splitSubPaths:
+            color = None
+            parent = inkex.etree.SubElement(self.current_layer, inkex.addNS('g','svg'))
+        else:
+            parent = self.current_layer
+            color = "#FF0000"
+            svgPaths = [[x for svgPath in svgPaths for x in svgPath]]
+
+        for svgPath in svgPaths:
             self.addPathToInkscape(svgPath, parent)
 
-    def makeEulerianGraph(self, G):
-        G2 = nx.MultiGraph(G)
+    def pathLength(self, G, path):
+        length = 0.0
+        for i,n in enumerate(path):
+            if i > 0:
+                length += self.dist(G.node[path[i-1]], G.node[path[i]])
+        return length
 
-        oddVertices = []
-        for n in G2.nodes():
-            if G2.degree(n) % 2 != 0:
-                oddVertices.append(n)
+    #Eulerization algorithm:
+    #1. Find all vertices with odd valence.
+    #2. Pair them up with their nearest neighbor.
+    #3. Find the shortest path between each pair.
+    #4. Duplicate these edges.
+    def makeEulerianGraph(self, G):
+        oddNodes = []
+        for n in G.nodes():
+            if G.degree(n) % 2 != 0:
+                oddNodes.append(n)
 
         pathsToDuplicate = []
 
-        while(oddVertices):
-            n1 = oddVertices[0]
+        while(oddNodes):
+            n1 = oddNodes[0]
             shortestPaths = []
-            for n2 in oddVertices:
+            #For every other node, find the shortest path to the closest node
+            for n2 in oddNodes:
                 if n2 != n1:
-                    shortestPath = nx.shortest_path(G2, n1, n2)
+                    shortestPath = nx.shortest_path(G, n1, n2, 'weight')
                     shortestPaths.append(shortestPath)
-                    if len(shortestPath) == 2:
-                        break#We won't find a path shorter than that
-            shortestShortestPath = min(shortestPaths, key=len)
+                    if len(shortestPath) <= 2:
+                        break #If we find a path of length 1 or 2, we assume it's good enough (to speed up calculation)
+            shortestShortestPath = min(shortestPaths, key=lambda x: self.pathLength(G, x))
             closestNode = shortestShortestPath[-1]
             pathsToDuplicate.append(shortestShortestPath)
-            oddVertices.pop(0)
-            oddVertices.remove(closestNode)
+            oddNodes.pop(0)
+            oddNodes.remove(closestNode)
 
         numberOfDuplicatedEdges = 0
+        lenghtOfDuplicatedEdges = 0.0
 
         for path in pathsToDuplicate:
             numberOfDuplicatedEdges += len(path)-1
-            nx.add_path(G2, path, draw=False)
+            pathLength = self.pathLength(G, path)
+            #self.log("Path length: " + str(pathLength))
+            lenghtOfDuplicatedEdges += pathLength
+        #self.log("Number of duplicated edges: " + str(numberOfDuplicatedEdges))
+        #self.log("Length of duplicated edges: " + str(lenghtOfDuplicatedEdges))
 
-        self.log("Number of duplicated edges: " + str(numberOfDuplicatedEdges))
+        G2 = nx.MultiGraph(G)
+        for path in pathsToDuplicate:
+            nx.add_path(G2, path)
+
         return G2
 
+    def computeEdgeWeights(self,G):
+        for n1,n2,key in G.edges(keys=True):
+            dist = self.dist(G.node[n1], G.node[n2])
+            G.add_edge(n1,n2,key,weight=dist)
 
 
     def effect(self):
         (vertices, edges) = self.parseSVG()
         G = self.buildGraph(vertices, edges)
-        #self.log("Number of edges: "+str(len(edges)))
 
         self.mergeWithTolerance(G, self.options.tolerance)
-        #self.log("Number of edges after cleaning: "+str(G.number_of_edges()))
-
-
-        #for n1,n2 in G.edges():
-            #self.log(str(G[n1][n2]['draw']))
-
 
         """for e in G.edges():
             self.log("E "+str(e[0]) + " " + str(e[1]))
         for n in G.nodes():
             self.log("Degree of "+str(n) + ": " + str(G.degree(n)))"""
+        connectedGraphs = list(nx.connected_component_subgraphs(G))
+        paths = []
+        for connectedGraph in connectedGraphs:
+            connectedGraph = self.makeEulerianGraph(connectedGraph)
+            #connectedGraph is now likely a multigraph
 
-        G = self.makeEulerianGraph(G)
-        #G is now a multigraph
+            self.computeEdgeWeights(connectedGraph)
+            pathEdges = list(nx.eulerian_circuit(connectedGraph))
+            pathEdges = self.removeSomeEdges(connectedGraph, pathEdges)
+            paths.extend(self.edgesToPaths(pathEdges))
 
-        eulerianCircuitEdges = list(nx.eulerian_circuit(G))
-        if not self.options.allowMultigraph:
-            eulerianCircuitEdgesNoDuplication = []
-            for n1,n2 in eulerianCircuitEdges:
-                if (n2,n1) not in eulerianCircuitEdges:
-                    eulerianCircuitEdgesNoDuplication.append((n1,n2))
-            eulerianCircuitEdges = eulerianCircuitEdgesNoDuplication
-
-        paths = self.edgesToPaths(eulerianCircuitEdges)
         self.log("Path number: " + str(len(paths)))
-        self.pathsToSVG(G, paths)
+        self.log("Total path length: " + str(sum(self.pathLength(G, x) for x in paths)))
 
+        self.pathsToSVG(G, paths)
 
 
 e = OptimizePaths()
