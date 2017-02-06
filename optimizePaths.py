@@ -23,9 +23,13 @@ import random
 import colorsys
 import os
 import numpy
+import timeit
 #Trick to allow placing symbolic links in the inkscape extension folder
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import networkx as nx
+
+MAX_CONSECUTIVE_OVERWRITE_EDGE = 3
+STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO = 3
 
 
 """
@@ -268,12 +272,7 @@ class OptimizePaths(inkex.Effect):
         return '#%02x%02x%02x' % rgb
 
     #Color should be in hex format ("#RRGGBB"), if not specified a random color will be generated
-    def addPathToInkscape(self, path, parent, color=None):
-        if(color is None):
-            color = colorsys.hsv_to_rgb(random.uniform(0.0, 1.0), 1.0, 1.0)
-            color = tuple(x * 255 for x in color)
-            color = self.rgbToHex( color )
-
+    def addPathToInkscape(self, path, parent, color):
         style = "stroke:"+color+";stroke-width:2;fill:none;"
         attribs = {'style': style, 'd': simplepath.formatPath(path) }
         inkex.etree.SubElement(parent, inkex.addNS('path','svg'), attribs )
@@ -306,7 +305,7 @@ class OptimizePaths(inkex.Effect):
             #The last duplicate path can allways be removed
             edgeRangeToRemove = [edgeRangeToRemove[-1]] if edgeRangeToRemove else []
         elif self.options.overwriteRule == 1: #Allow overwrite except for long paths
-            edgeRangeToRemove = [x for x in edgeRangeToRemove if x[1]-x[0] > 3]
+            edgeRangeToRemove = [x for x in edgeRangeToRemove if x[1]-x[0] > MAX_CONSECUTIVE_OVERWRITE_EDGE]
 
 
         indicesToRemove = set()
@@ -340,26 +339,28 @@ class OptimizePaths(inkex.Effect):
         svgPaths = []
         for path in paths:
             svgPath = []
-            for i,n in enumerate(path):
-                node_i_data = G.node[n]
+            for nodeIndex, n in enumerate(path):
                 command = None
-                if i==0:
+                if nodeIndex == 0:
                     command = 'M'
                 else:
                     command = 'L'
-                svgPath.append([command, (node_i_data['x'], node_i_data['y'])])
+                svgPath.append([command, (G.node[n]['x'], G.node[n]['y'])])
             svgPaths.append(svgPath)
 
+        color = "#FF0000"
         if self.options.splitSubPaths:
-            color = None
             parent = inkex.etree.SubElement(self.current_layer, inkex.addNS('g','svg'))
         else:
             parent = self.current_layer
-            color = "#FF0000"
-            svgPaths = [[x for svgPath in svgPaths for x in svgPath]]
+            svgPaths = [[x for svgPath in svgPaths for x in svgPath]]#Flatten the paths
 
-        for svgPath in svgPaths:
-            self.addPathToInkscape(svgPath, parent)
+        for pathIndex, svgPath in enumerate(svgPaths):
+            if self.options.splitSubPaths:
+                color = colorsys.hsv_to_rgb(pathIndex/float(len(svgPaths)-1), 1.0, 1.0)
+                color = tuple(x * 255 for x in color)
+                color = self.rgbToHex( color )
+            self.addPathToInkscape(svgPath, parent, color)
 
     def pathLength(self, G, path):
         length = 0.0
@@ -378,19 +379,26 @@ class OptimizePaths(inkex.Effect):
         for n in G.nodes():
             if G.degree(n) % 2 != 0:
                 oddNodes.append(n)
+        self.log("Number of nodes with odd degree: " + str(len(oddNodes)))
 
         pathsToDuplicate = []
 
         while(oddNodes):
             n1 = oddNodes[0]
+
             shortestPaths = []
             #For every other node, find the shortest path to the closest node
             for n2 in oddNodes:
                 if n2 != n1:
-                    shortestPath = nx.shortest_path(G, n1, n2, 'weight')
+                    #self.log(str(n1) + " " + str(n2))
+                    shortestPath = nx.astar_path(G, n1, n2,
+                    lambda n1, n2: self.dist(G.node[n1], G.node[n2]), 'weight')
+                    #self.log(str(len(shortestPath)))
                     shortestPaths.append(shortestPath)
-                    if len(shortestPath) <= 2:
-                        break #If we find a path of length 1 or 2, we assume it's good enough (to speed up calculation)
+                    if len(shortestPath) < STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO:
+                        #If we find a path of length <= STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO,
+                        #we assume it's good enough (to speed up calculation)
+                        break
             shortestShortestPath = min(shortestPaths, key=lambda x: self.pathLength(G, x))
             closestNode = shortestShortestPath[-1]
             pathsToDuplicate.append(shortestShortestPath)
@@ -405,7 +413,7 @@ class OptimizePaths(inkex.Effect):
             pathLength = self.pathLength(G, path)
             #self.log("Path length: " + str(pathLength))
             lenghtOfDuplicatedEdges += pathLength
-        #self.log("Number of duplicated edges: " + str(numberOfDuplicatedEdges))
+        self.log("Number of duplicated edges: " + str(numberOfDuplicatedEdges))
         #self.log("Length of duplicated edges: " + str(lenghtOfDuplicatedEdges))
 
         G2 = nx.MultiGraph(G)
@@ -421,19 +429,27 @@ class OptimizePaths(inkex.Effect):
 
 
     def effect(self):
+        totalTimerStart = timeit.default_timer()
         (vertices, edges) = self.parseSVG()
         G = self.buildGraph(vertices, edges)
 
+        timerStart = timeit.default_timer()
         self.mergeWithTolerance(G, self.options.tolerance)
+        timerStop = timeit.default_timer()
+        mergeDuration = timerStop-timerStart
 
         """for e in G.edges():
             self.log("E "+str(e[0]) + " " + str(e[1]))
         for n in G.nodes():
             self.log("Degree of "+str(n) + ": " + str(G.degree(n)))"""
+        makeEulerianDuration = 0
         connectedGraphs = list(nx.connected_component_subgraphs(G))
         paths = []
         for connectedGraph in connectedGraphs:
+            timerStart = timeit.default_timer()
             connectedGraph = self.makeEulerianGraph(connectedGraph)
+            timerStop = timeit.default_timer()
+            makeEulerianDuration += timerStop-timerStart
             #connectedGraph is now likely a multigraph
 
             self.computeEdgeWeights(connectedGraph)
@@ -445,7 +461,11 @@ class OptimizePaths(inkex.Effect):
         self.log("Total path length: " + str(sum(self.pathLength(G, x) for x in paths)))
 
         self.pathsToSVG(G, paths)
-
+        totalTimerStop = timeit.default_timer()
+        totalDuration = totalTimerStop-totalTimerStart
+        self.log("Merge duration: {:f} sec ({:f} min)".format(mergeDuration, mergeDuration/60))
+        self.log("Make Eulerian duration: {:f} sec ({:f} min)".format(makeEulerianDuration, makeEulerianDuration/60))
+        self.log("Total duration: {:f} sec ({:f} min)".format(totalDuration, totalDuration/60))
 
 e = OptimizePaths()
 e.affect()
