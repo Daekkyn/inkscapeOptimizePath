@@ -177,10 +177,6 @@ class OptimizePaths(inkex.Effect):
                         action="store", type="int",
                         dest="overwriteRule", default=1,
                         help="Options to control edge overwrite rules")
-        self.OptionParser.add_option("-s", "--splitSubPaths",
-                        action="store", type="inkbool",
-                        dest="splitSubPaths", default=False,
-                        help="Split sub-paths")
 
     def parseSVG(self):
         vertices = []
@@ -284,29 +280,28 @@ class OptimizePaths(inkex.Effect):
         #and end is the end index of the duplicate path
         edgeRangeToRemove = []
         isPrevEdgeDuplicate = False
+        duplicatePathStartIndex = -1
         for i,e in enumerate(edges):
             isEdgeDuplicate = e in visitedEdges or (e[1],e[0]) in visitedEdges
 
             if isEdgeDuplicate:
-                if not isPrevEdgeDuplicate:
-                    edgeRangeToRemove.append([i, 1])
+                if duplicatePathStartIndex == -1:
+                    duplicatePathStartIndex = i
             else:
-                if isPrevEdgeDuplicate:
-                    edgeRangeToRemove[-1][1] = i-1
+                if duplicatePathStartIndex >= 0:
+                    edgeRangeToRemove.append((duplicatePathStartIndex, i-1))
+                    duplicatePathStartIndex = -1
 
                 visitedEdges.add(e)
 
             if isEdgeDuplicate and i == len(edges)-1:
-                edgeRangeToRemove[-1][1] = i
-
-            isPrevEdgeDuplicate = isEdgeDuplicate
+                edgeRangeToRemove.append((duplicatePathStartIndex, i))
 
         if self.options.overwriteRule == 0: #Allow overwrite
             #The last duplicate path can allways be removed
             edgeRangeToRemove = [edgeRangeToRemove[-1]] if edgeRangeToRemove else []
         elif self.options.overwriteRule == 1: #Allow overwrite except for long paths
             edgeRangeToRemove = [x for x in edgeRangeToRemove if x[1]-x[0] > MAX_CONSECUTIVE_OVERWRITE_EDGE]
-
 
         indicesToRemove = set()
         for start, end in edgeRangeToRemove:
@@ -348,20 +343,17 @@ class OptimizePaths(inkex.Effect):
                 svgPath.append([command, (G.node[n]['x'], G.node[n]['y'])])
             svgPaths.append(svgPath)
 
-        color = "#FF0000"
-        if self.options.splitSubPaths:
-            parent = inkex.etree.SubElement(self.current_layer, inkex.addNS('g','svg'))
-        else:
-            parent = self.current_layer
-            svgPaths = [[x for svgPath in svgPaths for x in svgPath]]#Flatten the paths
+        #Create a group
+        parent = inkex.etree.SubElement(self.current_layer, inkex.addNS('g','svg'))
 
         for pathIndex, svgPath in enumerate(svgPaths):
-            if self.options.splitSubPaths:
-                color = colorsys.hsv_to_rgb(pathIndex/float(len(svgPaths)-1), 1.0, 1.0)
-                color = tuple(x * 255 for x in color)
-                color = self.rgbToHex( color )
+            #Generate a different color for every path
+            color = colorsys.hsv_to_rgb(pathIndex/float(len(svgPaths)), 1.0, 1.0)
+            color = tuple(x * 255 for x in color)
+            color = self.rgbToHex( color )
             self.addPathToInkscape(svgPath, parent, color)
 
+    #Computes the physical path length (it ignores the edge weight)
     def pathLength(self, G, path):
         length = 0.0
         for i,n in enumerate(path):
@@ -399,6 +391,7 @@ class OptimizePaths(inkex.Effect):
                         #If we find a path of length <= STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO,
                         #we assume it's good enough (to speed up calculation)
                         break
+            #For all the shortest paths from n1, we take the shortest one and therefore get the closest odd node
             shortestShortestPath = min(shortestPaths, key=lambda x: self.pathLength(G, x))
             closestNode = shortestShortestPath[-1]
             pathsToDuplicate.append(shortestShortestPath)
@@ -413,9 +406,10 @@ class OptimizePaths(inkex.Effect):
             pathLength = self.pathLength(G, path)
             #self.log("Path length: " + str(pathLength))
             lenghtOfDuplicatedEdges += pathLength
-        self.log("Number of duplicated edges: " + str(numberOfDuplicatedEdges))
+        #self.log("Number of duplicated edges: " + str(numberOfDuplicatedEdges))
         #self.log("Length of duplicated edges: " + str(lenghtOfDuplicatedEdges))
 
+        #Convert the graph to a MultiGraph to allow parallel edges
         G2 = nx.MultiGraph(G)
         for path in pathsToDuplicate:
             nx.add_path(G2, path)
@@ -426,7 +420,6 @@ class OptimizePaths(inkex.Effect):
         for n1,n2,key in G.edges(keys=True):
             dist = self.dist(G.node[n1], G.node[n2])
             G.add_edge(n1,n2,key,weight=dist)
-
 
     def effect(self):
         totalTimerStart = timeit.default_timer()
@@ -442,9 +435,11 @@ class OptimizePaths(inkex.Effect):
             self.log("E "+str(e[0]) + " " + str(e[1]))
         for n in G.nodes():
             self.log("Degree of "+str(n) + ": " + str(G.degree(n)))"""
-        makeEulerianDuration = 0
+        #Split disjoint graphs
         connectedGraphs = list(nx.connected_component_subgraphs(G))
         paths = []
+        makeEulerianDuration = 0
+
         for connectedGraph in connectedGraphs:
             timerStart = timeit.default_timer()
             connectedGraph = self.makeEulerianGraph(connectedGraph)

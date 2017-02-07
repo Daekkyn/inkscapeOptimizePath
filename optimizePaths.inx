@@ -9,7 +9,6 @@
            <item value="1">Allow some</item>
            <item value="2">Allow none</item>
        </param>
-       <param name="splitSubPaths" type="boolean" _gui-text="Split sub-paths">false</param>
        <param name="enableLog" type="boolean" _gui-text="Debug">false</param>
 
    <effect>

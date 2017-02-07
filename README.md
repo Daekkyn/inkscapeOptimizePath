@@ -1,7 +1,7 @@
 # Inkscape Optimize Path
 An Inkscape extension that tries to make the longest paths possible
 
-It converts the path to a graph and the use a depth first search algorithm to traverse the edges and build long connected paths.
+It converts the paths to a graph, converts the graph to an Eulerian graph and finds an Eulerian path.
 It was written for the [Axidraw](http://axidraw.com) pen plotter to reduce writing time of graph-like drawings like Voronoi diagrams and meshes.
 
 ---------
@@ -10,9 +10,13 @@ It was written for the [Axidraw](http://axidraw.com) pen plotter to reduce writi
 - Make sure to ungroup everything
 - Make sure that the paths use only absolute coordinates (see trick below)
 - Make sure to not have transforms on the paths. You can use the [Apply Transform](https://inkscape.org/en/~Klowner/★apply-transforms) extension to remove them
-- Select all the paths you want to optimize (currently only works with lines)
+- Select all the paths you want to optimize (currently only works with poly-lines)
 - Open the extension ('Extensions > Modify Path > Optimize Path')
 - Set the merge tolerance (0.1 should work in most cases)
+- Choose the Overwrite rule:
+	- "Allow" means that the result will be a single path which might (probably) will have some overlapping edges.
+	- "Allow none" means that the results will be multiple disconnected paths but there will be no overlapping edges.
+	- "Allow some" is an in-between, overlapping edges are allowed, but only in short numbers. This is probably the best choice in most cases.
 - Press Apply
 
 **Trick to remove relative coordinates**
