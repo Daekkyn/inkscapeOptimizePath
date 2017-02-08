@@ -30,6 +30,9 @@ import networkx as nx
 
 MAX_CONSECUTIVE_OVERWRITE_EDGE = 3
 STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO = 3
+OVERWRITE_ALLOW = 0
+OVERWRITE_ALLOW_SOME = 1
+OVERWRITE_ALLOW_NONE = 2
 
 
 """
@@ -297,10 +300,10 @@ class OptimizePaths(inkex.Effect):
             if isEdgeDuplicate and i == len(edges)-1:
                 edgeRangeToRemove.append((duplicatePathStartIndex, i))
 
-        if self.options.overwriteRule == 0: #Allow overwrite
+        if self.options.overwriteRule == OVERWRITE_ALLOW:
             #The last duplicate path can allways be removed
             edgeRangeToRemove = [edgeRangeToRemove[-1]] if edgeRangeToRemove else []
-        elif self.options.overwriteRule == 1: #Allow overwrite except for long paths
+        elif self.options.overwriteRule == OVERWRITE_ALLOW_SOME: #Allow overwrite except for long paths
             edgeRangeToRemove = [x for x in edgeRangeToRemove if x[1]-x[0] > MAX_CONSECUTIVE_OVERWRITE_EDGE]
 
         indicesToRemove = set()
@@ -311,23 +314,50 @@ class OptimizePaths(inkex.Effect):
 
         return cleanedEdges
 
+    #Find the first break and rotate the edges to align to this break
+    #this allows to avoid an extra path
+    #Return the rotated edges
+    def shiftEdgesToBreak(self, edges):
+        if not edges:
+            return edges
+        #Only useful if the last edge connects to the first
+        if edges[0][0] != edges[-1][1]:
+            return edges
+
+        for i,e in enumerate(edges):
+            if i == 0:
+                continue
+            if edges[i-1][1] != e[0]:
+                return edges[i:] + edges[:i]
+
+        return edges
+
     def edgesToPaths(self, edges):
         paths = []
         path = []
 
         for i,e in enumerate(edges):
-            #Path ends either at the last edge or when the next edge starts somewhere else
-            endPath = (i == len(edges)-1 or e[1] != edges[i+1][0])
-
-            if(not path):
-                path.append(e[0])
-                path.append(e[1])
-            else:
-                path.append(e[1])
-
-            if endPath:
+            if e[0] == -1:
+                assert not path
+            elif e[1] == -1 and path:
                 paths.append(path)
                 path = []
+            else:
+                #Path ends either at the last edge or when the next edge starts somewhere else
+                endPath = (i == len(edges)-1 or e[1] != edges[i+1][0])
+
+                if(not path):
+                    path.append(e[0])
+                    path.append(e[1])
+                else:
+                    path.append(e[1])
+
+                if endPath:
+                    paths.append(path)
+                    path = []
+
+        if self.options.overwriteRule == OVERWRITE_ALLOW:
+            assert len(paths) == 1
         return paths
 
     def pathsToSVG(self, G, paths):
@@ -366,12 +396,18 @@ class OptimizePaths(inkex.Effect):
     #2. Pair them up with their nearest neighbor.
     #3. Find the shortest path between each pair.
     #4. Duplicate these edges.
+    #Doesn't modify input graph except compute edge weight
     def makeEulerianGraph(self, G):
         oddNodes = []
         for n in G.nodes():
             if G.degree(n) % 2 != 0:
                 oddNodes.append(n)
-        self.log("Number of nodes with odd degree: " + str(len(oddNodes)))
+        #self.log("Number of nodes with odd degree: " + str(len(oddNodes)))
+
+        if len(oddNodes) == 0:
+            return G
+
+        self.computeEdgeWeights(G)
 
         pathsToDuplicate = []
 
@@ -416,10 +452,28 @@ class OptimizePaths(inkex.Effect):
 
         return G2
 
+    #Doesn't modify input graph
+    #faster than makeEulerianGraph but creates an extra node
+    def makeEulerianGraphExtraNode(self, G):
+        oddNodes = []
+        for n in G.nodes():
+            if G.degree(n) % 2 != 0:
+                oddNodes.append(n)
+        if len(oddNodes) == 0:
+            return G
+
+        G2 = nx.Graph(G)
+        G2.add_node(-1)
+        for n in oddNodes:
+            G2.add_edge(n, -1)
+
+        return G2
+
+
     def computeEdgeWeights(self,G):
-        for n1,n2,key in G.edges(keys=True):
+        for n1,n2 in G.edges():
             dist = self.dist(G.node[n1], G.node[n2])
-            G.add_edge(n1,n2,key,weight=dist)
+            G.add_edge(n1,n2,weight=dist)
 
     def effect(self):
         totalTimerStart = timeit.default_timer()
@@ -442,14 +496,18 @@ class OptimizePaths(inkex.Effect):
 
         for connectedGraph in connectedGraphs:
             timerStart = timeit.default_timer()
-            connectedGraph = self.makeEulerianGraph(connectedGraph)
+            if self.options.overwriteRule == OVERWRITE_ALLOW_NONE:
+                #connectedGraph = self.makeEulerianGraphExtraNode(connectedGraph)
+                connectedGraph = self.makeEulerianGraph(connectedGraph)
+            else:
+                connectedGraph = self.makeEulerianGraph(connectedGraph)
             timerStop = timeit.default_timer()
             makeEulerianDuration += timerStop-timerStart
             #connectedGraph is now likely a multigraph
 
-            self.computeEdgeWeights(connectedGraph)
             pathEdges = list(nx.eulerian_circuit(connectedGraph))
             pathEdges = self.removeSomeEdges(connectedGraph, pathEdges)
+            pathEdges = self.shiftEdgesToBreak(pathEdges)
             paths.extend(self.edgesToPaths(pathEdges))
 
         self.log("Path number: " + str(len(paths)))
