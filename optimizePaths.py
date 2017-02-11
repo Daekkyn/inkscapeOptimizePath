@@ -220,10 +220,10 @@ class OptimizePaths(inkex.Effect):
         G = nx.Graph()
         for i, v in enumerate(vertices):
             G.add_node(i, x=v[0], y=v[1])
-            self.log("N "+ str(i) + " (" + str(v[0]) + "," + str(v[1]) + ")")
+            #self.log("N "+ str(i) + " (" + str(v[0]) + "," + str(v[1]) + ")")
         for e in edges:
-            G.add_edge(e[0], e[1], weight=2)
-            self.log("E "+str(e[0]) + " " + str(e[1]))
+            G.add_edge(*e)
+            #self.log("E "+str(e[0]) + " " + str(e[1]))
         return G
 
     @staticmethod
@@ -261,7 +261,7 @@ class OptimizePaths(inkex.Effect):
                     newEdges.append(newEdge)
 
             for e in newEdges:
-                G.add_edge(e[0], e[1])
+                G.add_edge(*e)
                 #self.log("Added edge: "+str(e[0]) + " " + str(e[1]))
             G.remove_node(n)
             #self.log("Removed node: " + str(n))
@@ -337,11 +337,14 @@ class OptimizePaths(inkex.Effect):
         path = []
 
         for i,e in enumerate(edges):
+            self.log(e)
             if e[0] == -1:
                 assert not path
-            elif e[1] == -1 and path:
-                paths.append(path)
+            elif e[1] == -1:
+                if path:
+                    paths.append(path)
                 path = []
+
             else:
                 #Path ends either at the last edge or when the next edge starts somewhere else
                 endPath = (i == len(edges)-1 or e[1] != edges[i+1][0])
@@ -358,6 +361,8 @@ class OptimizePaths(inkex.Effect):
 
         if self.options.overwriteRule == OVERWRITE_ALLOW:
             assert len(paths) == 1
+
+        #paths.sort(key=len, reverse=True)
         return paths
 
     def pathsToSVG(self, G, paths):
@@ -463,7 +468,7 @@ class OptimizePaths(inkex.Effect):
             return G
 
         G2 = nx.Graph(G)
-        G2.add_node(-1)
+        G2.add_node(-1, x=0, y=0)
         for n in oddNodes:
             G2.add_edge(n, -1)
 
@@ -474,6 +479,96 @@ class OptimizePaths(inkex.Effect):
         for n1,n2 in G.edges():
             dist = self.dist(G.node[n1], G.node[n2])
             G.add_edge(n1,n2,weight=dist)
+
+    def _getNodePosition(self, G, n):
+        return (G.node[n]['x'], G.node[n]['y'])
+
+    def _getBestEdge(self, G, previousEdge, edges):
+        previousEdgeVectNormalized = numpy.array(self._getNodePosition(G,previousEdge[1])) - numpy.array(self._getNodePosition(G,previousEdge[0]))
+        #self.log(str(numpy.linalg.norm(previousEdgeVectNormalized)) + " " + str(previousEdge[1]) + " " + str(previousEdge[0]))
+        previousEdgeVectNormalized = previousEdgeVectNormalized/numpy.linalg.norm(previousEdgeVectNormalized)
+        #previousEdgeVectNormalized = numpy.array((0,1))
+        def angleKey(outEdge):
+            edgeVectNormalized = numpy.array(self._getNodePosition(G,outEdge[1])) - numpy.array(self._getNodePosition(G,outEdge[0]))
+            edgeVectNormalized = edgeVectNormalized/numpy.linalg.norm(edgeVectNormalized)
+            return numpy.dot(previousEdgeVectNormalized, edgeVectNormalized)
+
+        return max(edges, key=angleKey)
+
+    """def eulerian_circuit(self, G):
+        g = G.__class__(G)#G.copy()
+        v = next(g.nodes())
+
+        degree = g.degree
+        edges = g.edges
+
+        circuit = []
+        vertex_stack = [v]
+        last_vertex = None
+        while vertex_stack:
+            current_vertex = vertex_stack[-1]
+            if degree(current_vertex) == 0:
+                if last_vertex is not None:
+                    circuit.append((last_vertex, current_vertex))
+                    self.log(str(last_vertex) + " " + str(current_vertex))
+                last_vertex = current_vertex
+                vertex_stack.pop()
+            else:
+                if circuit:
+                    arbitrary_edge = self._getBestEdge(g, circuit[-1], edges(current_vertex))
+                else:#For the first iteration we arbitrarily take the first edge
+                    arbitrary_edge = next(edges(current_vertex))
+                #self.log(str(arbitrary_edge) + "::" + str(edges[current_vertex]))
+
+                #self.log(str(edges[current_vertex]))
+                #self.log(" ")
+
+                vertex_stack.append(arbitrary_edge[1])
+                g.remove_edge(*arbitrary_edge)
+
+        return circuit"""
+
+    #Walk as straight as possible from node until stuck
+    def walk(self, node, G):
+        n = node
+        e = None
+        path = [n]
+
+        while G.degree(n):
+            if e:
+                e = self._getBestEdge(G, e, G.edges(n))
+            else:#For the first iteration we arbitrarily take the first edge
+                e = next(G.edges(n))
+            n = e[1]
+            G.remove_edge(*e)
+            path.append(n)
+
+        return path
+
+    def eulerian_circuit_hierholzer(self, G):
+        g = G.copy()
+        v = next(g.nodes())
+
+        cycle = self.walk(v, g)
+        assert cycle[0] == cycle[-1]
+        notvisited = set(cycle)
+
+        while len(notvisited) != 0:
+            v = notvisited.pop()
+            if g.degree(v) != 0:
+                i = cycle.index(v)
+                sub = self.walk(v, g)
+                assert sub[0] == sub[-1]
+                cycle = cycle[:i]+sub[:-1]+cycle[i:]
+                notvisited.update(sub)
+
+        cycleEdges = []
+        prevNode = None
+        for n in cycle:
+            if prevNode is not None:
+                cycleEdges.append((prevNode, n))
+            prevNode = n
+        return cycleEdges
 
     def effect(self):
         totalTimerStart = timeit.default_timer()
@@ -497,15 +592,14 @@ class OptimizePaths(inkex.Effect):
         for connectedGraph in connectedGraphs:
             timerStart = timeit.default_timer()
             if self.options.overwriteRule == OVERWRITE_ALLOW_NONE:
-                #connectedGraph = self.makeEulerianGraphExtraNode(connectedGraph)
-                connectedGraph = self.makeEulerianGraph(connectedGraph)
+                connectedGraph = self.makeEulerianGraphExtraNode(connectedGraph)
             else:
                 connectedGraph = self.makeEulerianGraph(connectedGraph)
             timerStop = timeit.default_timer()
             makeEulerianDuration += timerStop-timerStart
             #connectedGraph is now likely a multigraph
 
-            pathEdges = list(nx.eulerian_circuit(connectedGraph))
+            pathEdges = self.eulerian_circuit_hierholzer(connectedGraph)
             pathEdges = self.removeSomeEdges(connectedGraph, pathEdges)
             pathEdges = self.shiftEdgesToBreak(pathEdges)
             paths.extend(self.edgesToPaths(pathEdges))
