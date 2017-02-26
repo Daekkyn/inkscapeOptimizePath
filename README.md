@@ -1,8 +1,10 @@
 # Inkscape Optimize Path
-An Inkscape extension that tries to make the longest paths possible
+An Inkscape extension that tries to make the longest continuous paths
 
-It converts the paths to a graph, converts the graph to an Eulerian graph and finds an Eulerian path.
+It converts the paths to a graph, converts the graph to an Eulerian graph and finds an Eulerian cycle.
 It was written for the [Axidraw](http://axidraw.com) pen plotter to reduce writing time of graph-like drawings like Voronoi diagrams and meshes.
+
+[Example result](https://youtu.be/ZuaCT3Qi_-c)
 
 ---------
 

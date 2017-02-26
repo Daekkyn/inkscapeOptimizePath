@@ -337,7 +337,6 @@ class OptimizePaths(inkex.Effect):
         path = []
 
         for i,e in enumerate(edges):
-            self.log(e)
             if e[0] == -1:
                 assert not path
             elif e[1] == -1:
@@ -428,7 +427,7 @@ class OptimizePaths(inkex.Effect):
                     lambda n1, n2: self.dist(G.node[n1], G.node[n2]), 'weight')
                     #self.log(str(len(shortestPath)))
                     shortestPaths.append(shortestPath)
-                    if len(shortestPath) < STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO:
+                    if len(shortestPath) <= STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO:
                         #If we find a path of length <= STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO,
                         #we assume it's good enough (to speed up calculation)
                         break
@@ -586,9 +585,10 @@ class OptimizePaths(inkex.Effect):
             self.log("Degree of "+str(n) + ": " + str(G.degree(n)))"""
         #Split disjoint graphs
         connectedGraphs = list(nx.connected_component_subgraphs(G))
+        self.log("Number of disconnected graphs: " + str(len(connectedGraphs)))
+
         paths = []
         makeEulerianDuration = 0
-
         for connectedGraph in connectedGraphs:
             timerStart = timeit.default_timer()
             if self.options.overwriteRule == OVERWRITE_ALLOW_NONE:
