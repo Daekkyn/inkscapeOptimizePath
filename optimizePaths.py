@@ -237,13 +237,11 @@ class OptimizePaths(inkex.Effect):
     def mergeWithTolerance(self, G, tolerance):
         mergeTo = {}
         for ni in G.nodes():
-            node_i_data = G.node[ni]
             for nj in G.nodes():
                 if nj <= ni :
                     continue
                 #self.log("Test " + str(ni) + " with " + str(nj))
-                node_j_data = G.node[nj]
-                dist_ij = self.dist(node_i_data, node_j_data)
+                dist_ij = self.dist(G.nodes[ni], G.nodes[nj])
                 if (dist_ij < tolerance) and (nj not in mergeTo) and (ni not in mergeTo):
                     self.log("Merge " + str(nj) + " with " + str(ni) + " (dist="+str(dist_ij)+")")
                     mergeTo[nj] = ni
@@ -257,7 +255,7 @@ class OptimizePaths(inkex.Effect):
                 else:
                     newEdge = (mergeTo[n], neigh_n)
 
-                if newEdge[0] is not newEdge[1]:
+                if newEdge[0] != newEdge[1]:#Don't add self-loops
                     newEdges.append(newEdge)
 
             for e in newEdges:
@@ -374,7 +372,7 @@ class OptimizePaths(inkex.Effect):
                     command = 'M'
                 else:
                     command = 'L'
-                svgPath.append([command, (G.node[n]['x'], G.node[n]['y'])])
+                svgPath.append([command, (G.nodes[n]['x'], G.nodes[n]['y'])])
             svgPaths.append(svgPath)
 
         #Create a group
@@ -392,7 +390,7 @@ class OptimizePaths(inkex.Effect):
         length = 0.0
         for i,n in enumerate(path):
             if i > 0:
-                length += self.dist(G.node[path[i-1]], G.node[path[i]])
+                length += self.dist(G.nodes[path[i-1]], G.nodes[path[i]])
         return length
 
     #Eulerization algorithm:
@@ -403,7 +401,7 @@ class OptimizePaths(inkex.Effect):
     #Doesn't modify input graph except compute edge weight
     def makeEulerianGraph(self, G):
         oddNodes = []
-        for n in G.nodes():
+        for n in G.nodes:
             if G.degree(n) % 2 != 0:
                 oddNodes.append(n)
         #self.log("Number of nodes with odd degree: " + str(len(oddNodes)))
@@ -424,7 +422,7 @@ class OptimizePaths(inkex.Effect):
                 if n2 != n1:
                     #self.log(str(n1) + " " + str(n2))
                     shortestPath = nx.astar_path(G, n1, n2,
-                    lambda n1, n2: self.dist(G.node[n1], G.node[n2]), 'weight')
+                    lambda n1, n2: self.dist(G.nodes[n1], G.nodes[n2]), 'weight')
                     #self.log(str(len(shortestPath)))
                     shortestPaths.append(shortestPath)
                     if len(shortestPath) <= STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO:
@@ -460,7 +458,7 @@ class OptimizePaths(inkex.Effect):
     #faster than makeEulerianGraph but creates an extra node
     def makeEulerianGraphExtraNode(self, G):
         oddNodes = []
-        for n in G.nodes():
+        for n in G.nodes:
             if G.degree(n) % 2 != 0:
                 oddNodes.append(n)
         if len(oddNodes) == 0:
@@ -476,11 +474,11 @@ class OptimizePaths(inkex.Effect):
 
     def computeEdgeWeights(self,G):
         for n1,n2 in G.edges():
-            dist = self.dist(G.node[n1], G.node[n2])
+            dist = self.dist(G.nodes[n1], G.nodes[n2])
             G.add_edge(n1,n2,weight=dist)
 
     def _getNodePosition(self, G, n):
-        return (G.node[n]['x'], G.node[n]['y'])
+        return (G.nodes[n]['x'], G.nodes[n]['y'])
 
     def _getBestEdge(self, G, previousEdge, edges):
         previousEdgeVectNormalized = numpy.array(self._getNodePosition(G,previousEdge[1])) - numpy.array(self._getNodePosition(G,previousEdge[0]))
@@ -533,11 +531,11 @@ class OptimizePaths(inkex.Effect):
         e = None
         path = [n]
 
-        while G.degree(n):
+        while G.degree[n]:#Continue until there no unvisited edges from n
             if e:
                 e = self._getBestEdge(G, e, G.edges(n))
             else:#For the first iteration we arbitrarily take the first edge
-                e = next(G.edges(n))
+                e = (n, next(iter(G[n])))
             n = e[1]
             G.remove_edge(*e)
             path.append(n)
@@ -546,7 +544,7 @@ class OptimizePaths(inkex.Effect):
 
     def eulerian_circuit_hierholzer(self, G):
         g = G.copy()
-        v = next(g.nodes())
+        v = next(iter(g.nodes))#First vertex, arbitrary
 
         cycle = self.walk(v, g)
         assert cycle[0] == cycle[-1]
@@ -564,12 +562,16 @@ class OptimizePaths(inkex.Effect):
         cycleEdges = []
         prevNode = None
         for n in cycle:
-            if prevNode is not None:
+            if prevNode != None:
                 cycleEdges.append((prevNode, n))
             prevNode = n
         return cycleEdges
 
     def effect(self):
+        if int(nx.__version__[0]) < 2:
+            inkex.debug("NetworkX version is: {} but should be >= 2.0.".format(nx.__version__))
+            return
+
         totalTimerStart = timeit.default_timer()
         (vertices, edges) = self.parseSVG()
         G = self.buildGraph(vertices, edges)
