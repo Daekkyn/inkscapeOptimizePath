@@ -8,12 +8,16 @@ It was written for the [Axidraw](http://axidraw.com) pen plotter to reduce writi
 
 ---------
 
+**Installation**
+- Copy the files _optimizePaths.inx_ and _optimizePaths.py_ in the Inkscape extension folder (On MacOS: _/Applications/Inkscape.app/Contents/Resources/share/inkscape/extensions_)
+- Download the latest [NetworkX](http://networkx.github.io) package and copy the _networkx_ folder in the Inkscape extension folder.
+
 **Usage**
 - Make sure to ungroup everything
 - Make sure that the paths use only absolute coordinates (see trick below)
 - Make sure to not have transforms on the paths. You can use the [Apply Transform](https://inkscape.org/en/~Klowner/★apply-transforms) extension to remove them
 - Select all the paths you want to optimize (currently only works with poly-lines)
-- Open the extension ('Extensions > Modify Path > Optimize Path')
+- Open the extension (Extensions > Generate from Path > Optimize Path)
 - Set the merge tolerance (0.1 should work in most cases)
 - Choose the Overwrite rule:
 	- "Allow" means that the result will be a single path which might (probably) will have some overlapping edges.
@@ -28,4 +32,4 @@ It was written for the [Axidraw](http://axidraw.com) pen plotter to reduce writi
 
 
 **Dependencies**
-[NetworkX](http://networkx.github.io) a graph library which depends on [decorator](https://github.com/micheles/decorator)
+[NetworkX](http://networkx.github.io), a graph library.
