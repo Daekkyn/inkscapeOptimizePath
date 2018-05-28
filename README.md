@@ -11,6 +11,7 @@ It was written for the [Axidraw](http://axidraw.com) pen plotter to reduce writi
 **Installation**
 - Copy the files _optimizePaths.inx_ and _optimizePaths.py_ in the Inkscape extension folder (On MacOS: _/Applications/Inkscape.app/Contents/Resources/share/inkscape/extensions_)
 - Download the latest [NetworkX](http://networkx.github.io) package and copy the _networkx_ folder in the Inkscape extension folder.
+- Download the latest [Decorator](https://github.com/micheles/decorator/releases) package and copy the _decorator.py_ file in the Inkscape extension folder.
 
 **Usage**
 - Make sure to ungroup everything
@@ -32,4 +33,4 @@ It was written for the [Axidraw](http://axidraw.com) pen plotter to reduce writi
 
 
 **Dependencies**
-[NetworkX](http://networkx.github.io), a graph library.
+[NetworkX](http://networkx.github.io), a graph library, which depends on [Decorator](https://github.com/micheles/decorator).
