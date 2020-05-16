@@ -4,12 +4,12 @@
        <dependency type="executable" location="extensions">optimizePaths.py</dependency>
        <dependency type="executable" location="extensions">inkex.py</dependency>
      	 <param name="tolerance" type="float" min="0.0" max="100.0" _gui-text="Merge Tolerance:">0.10</param>
-       <param name="overwriteRule" type="enum" gui-text="Traceback:">
+       <param name="overwriteRule" type="optiongroup" appearance="radio" gui-text="Traceback:">
            <item value="0">Allow</item>
            <item value="1">Allow some</item>
            <item value="2">Allow none</item>
        </param>
-       <param name="enableLog" type="boolean" _gui-text="Debug">false</param>
+       <param name="enableLog" type="bool" _gui-text="Debug">false</param>
 
    <effect>
                <object-type>path</object-type>
@@ -18,6 +18,6 @@
                 </effects-menu>
    </effect>
    <script>
-       <command reldir="extensions" interpreter="python">optimizePaths.py</command>
+       <command location="inx" interpreter="python">optimizePaths.py</command>
    </script>
 </inkscape-extension>
