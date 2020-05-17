@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
 Foundation, Inc., 51 Franklin St Fifth Floor, Boston, MA 02139
 '''
+from itertools import combinations
+
 import inkex
 import sys
 import math
@@ -206,16 +208,14 @@ class OptimizePaths(inkex.GenerateExtension):
 
         return (vertices, edges)
 
-    # Also computes edge weight
     def buildGraph(self, vertices, edges):
         G = nx.Graph()
         for i, v in enumerate(vertices):
             G.add_node(i, x=v[0], y=v[1])
-            # self.log("N "+ str(i) + " (" + str(v[0]) + "," + str(v[1]) + ")")
         for e in edges:
-            dist = self.dist(G.nodes[e[0]], G.nodes[e[1]])
-            G.add_edge(e[0], e[1], weight=dist)
-            # self.log("E "+str(e[0]) + " " + str(e[1]))
+            #dist = self.dist(G.nodes[e[0]], G.nodes[e[1]])
+            #G.add_edge(e[0], e[1], weight=dist)
+            G.add_edge(e[0], e[1])
         return G
 
     @staticmethod
@@ -447,6 +447,47 @@ class OptimizePaths(inkex.GenerateExtension):
 
         return G2
 
+    #Adapted from NetworkX https://networkx.github.io/documentation/stable/_modules/networkx/algorithms/euler.html#eulerize
+    def make_semi_eulerian(self, G):
+        if G.order() == 0:
+            raise nx.NetworkXPointlessConcept("Cannot Eulerize null graph")
+        if not nx.is_connected(G):
+            raise nx.NetworkXError("G is not connected")
+        odd_degree_nodes = [n for n, d in G.degree() if d % 2 == 1]
+        G = nx.MultiGraph(G)
+        if len(odd_degree_nodes) <= 2:
+            return G
+
+        # get all shortest paths between vertices of odd degree
+        odd_deg_pairs_paths = [(m,
+                                {n: nx.shortest_path(G, source=m, target=n)}
+                                )
+                               for m, n in combinations(odd_degree_nodes, 2)]
+
+        # use inverse path lengths as edge-weights in a new graph
+        # store the paths in the graph for easy indexing later
+        Gp = nx.Graph()
+        for n, Ps in odd_deg_pairs_paths:
+            for m, P in Ps.items():
+                if n != m:
+                    Gp.add_edge(m, n, weight=1/len(P), path=P) # Considers the weight of every edge to be 1
+
+        # find the minimum weight matching of edges in the weighted graph
+        best_matching = nx.Graph(list(nx.max_weight_matching(Gp)))
+
+        # We can remove on of the paths to have a semi-eulerian graph, we choose the longest path
+        longest_path_edge = max(best_matching.edges(), key=lambda e: len(Gp[e[0]][e[1]]['path']))
+        self.log(str(longest_path_edge) + " " + str(Gp[longest_path_edge[0]][longest_path_edge[1]]['path']))
+        best_matching.remove_edge(longest_path_edge[0], longest_path_edge[1])
+
+
+        # duplicate each edge along each path in the set of paths in Gp
+        for m, n in best_matching.edges():
+            path = Gp[m][n]["path"]
+            G.add_edges_from(nx.utils.pairwise(path))
+        assert(nx.is_semieulerian(G) or nx.is_eulerian(G))
+        return G
+
     # Doesn't modify input graph
     # faster than makeEulerianGraph but creates an extra node
     def makeEulerianGraphExtraNode(self, G):
@@ -487,38 +528,6 @@ class OptimizePaths(inkex.GenerateExtension):
 
         return max(edges, key=angleKey)
 
-    """def eulerian_circuit(self, G):
-        g = G.__class__(G)#G.copy()
-        v = next(g.nodes())
-
-        degree = g.degree
-        edges = g.edges
-
-        circuit = []
-        vertex_stack = [v]
-        last_vertex = None
-        while vertex_stack:
-            current_vertex = vertex_stack[-1]
-            if degree(current_vertex) == 0:
-                if last_vertex is not None:
-                    circuit.append((last_vertex, current_vertex))
-                    self.log(str(last_vertex) + " " + str(current_vertex))
-                last_vertex = current_vertex
-                vertex_stack.pop()
-            else:
-                if circuit:
-                    arbitrary_edge = self._getBestEdge(g, circuit[-1], edges(current_vertex))
-                else:#For the first iteration we arbitrarily take the first edge
-                    arbitrary_edge = next(edges(current_vertex))
-                #self.log(str(arbitrary_edge) + "::" + str(edges[current_vertex]))
-
-                #self.log(str(edges[current_vertex]))
-                #self.log(" ")
-
-                vertex_stack.append(arbitrary_edge[1])
-                g.remove_edge(*arbitrary_edge)
-
-        return circuit"""
 
     # Walk as straight as possible from node until stuck
     def walk(self, node, G):
@@ -596,17 +605,17 @@ class OptimizePaths(inkex.GenerateExtension):
                 connectedGraph = self.makeEulerianGraphExtraNode(connectedGraph)
                 #connectedGraph = nx.eulerize(connectedGraph)
             else:
-                connectedGraph = self.makeEulerianGraph(connectedGraph)
-                #connectedGraph = nx.eulerize(connectedGraph)
+                #connectedGraph = self.makeEulerianGraph(connectedGraph)
+                connectedGraph = self.make_semi_eulerian(connectedGraph)
             timerStop = timeit.default_timer()
             makeEulerianDuration += timerStop - timerStart
             # connectedGraph is now likely a multigraph
 
             finalEdgeCount = finalEdgeCount + nx.number_of_edges(connectedGraph)
-            #pathEdges = list(nx.eulerian_path(connectedGraph))
-            pathEdges = self.eulerian_circuit_hierholzer(connectedGraph)
-            pathEdges = self.removeSomeEdges(connectedGraph, pathEdges)
-            pathEdges = self.shiftEdgesToBreak(pathEdges)
+            pathEdges = list(nx.eulerian_path(connectedGraph))
+            #pathEdges = self.eulerian_circuit_hierholzer(connectedGraph)
+            #pathEdges = self.removeSomeEdges(connectedGraph, pathEdges)
+            #pathEdges = self.shiftEdgesToBreak(pathEdges)
 
             paths.extend(self.edgesToPaths(pathEdges))
 
