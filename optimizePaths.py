@@ -21,7 +21,6 @@ from itertools import combinations
 import inkex
 import sys
 import math
-import random
 import colorsys
 import os
 import numpy
@@ -31,141 +30,7 @@ import timeit
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 import networkx as nx
 
-MAX_CONSECUTIVE_OVERWRITE_EDGE = 3
 STOP_SHORTEST_PATH_IF_SMALLER_OR_EQUAL_TO = 1
-OVERWRITE_ALLOW = 0
-OVERWRITE_ALLOW_SOME = 1
-OVERWRITE_ALLOW_NONE = 2
-
-"""
-class Graph:
-    def __init__(self):
-        self.__adj = {}
-        self.__data = {}
-
-    def __str__(self):
-        return str(self.__adj)
-
-    def nodes(self):
-        nodes = []
-        for n in self.__adj:
-            nodes.append(n)
-        return nodes
-
-    def edges(self):
-        edges = []
-        for n1 in self.__adj:
-            for n2 in self.neighbours(n1):
-                if((n2, n1) not in edges):
-                    edges.append((n1, n2))
-        return edges
-
-    def node(self, n):
-        if n in self.__adj:
-            return self.__data[n]
-        else:
-            raise ValueError('Inexistant node')
-
-    def neighbours(self, n):
-        if n in self.__adj:
-            return self.__adj[n]
-        else:
-            raise ValueError('Inexistant node')
-
-    def outEdges(self, n):
-        edges = []
-        for n2 in self.neighbours(n):
-            edges.append((n, n2))
-        return edges
-
-    def degree(self, n):
-        if n in self.__adj:
-            return len(self.__adj[n])
-        else:
-            raise ValueError('Inexistant node')
-
-    def addNode(self, n, data):
-        if n not in self.__adj:
-            self.__adj[n] = []
-            self.__data[n] = data
-        else:
-            raise ValueError('Node already exists')
-
-    def removeNode(self, n):
-        if n in self.__adj:
-            #Remove all edges pointing to node
-            for n2 in self.__adj:
-                neighbours = self.__adj[n2]
-                if n in neighbours:
-                    neighbours.remove(n)
-            del self.__adj[n]
-            del self.__data[n]
-        else:
-            raise ValueError('Removing inexistant node')
-
-    def addEdge(self, n1, n2):
-        if(n1 in self.__adj and n2 in self.__adj):
-            self.__adj[n1].append(n2)
-            self.__adj[n2].append(n1)
-        else:
-            raise ValueError('Adding edge to inexistant node')
-
-    def removeEdge(self, n1, n2):
-        if(n1 in self.__adj and n2 in self.__adj and
-        n2 in self.__adj[n1] and n1 in self.__adj[n2]):
-            self.__adj[n1].remove(n2)
-            self.__adj[n2].remove(n1)
-        else:
-            raise ValueError('Removing inexistant edge')
-
-    def __sortedEdgesByAngle(self, previousEdge, edges):
-        previousEdgeVectNormalized = numpy.array(self.node(previousEdge[1])) - numpy.array(self.node(previousEdge[0]))
-        previousEdgeVectNormalized = previousEdgeVectNormalized/numpy.linalg.norm(previousEdgeVectNormalized)
-        #previousEdgeVectNormalized = numpy.array((0,1))
-        def angleKey(outEdge):
-            edgeVectNormalized = numpy.array(self.node(outEdge[1])) - numpy.array(self.node(outEdge[0]))
-            edgeVectNormalized = edgeVectNormalized/numpy.linalg.norm(edgeVectNormalized)
-            return -numpy.dot(previousEdgeVectNormalized, edgeVectNormalized)
-
-        return sorted(edges, key=angleKey)
-
-    def dfsEdges(self):
-        nodes = self.nodes()
-        visitedEdges = set()
-        visitedNodes = set()
-        edges = {}
-        dfsEdges = []
-
-        for startNode in nodes:
-            #if self.degree(startNode) != 1:
-                #continue#Makes sure we don't start in the middle of a path
-            stack = [startNode]
-            prevEdge = None
-            while stack:
-                currentNode = stack[-1]
-                if currentNode not in visitedNodes:
-                    edges[currentNode] = self.outEdges(currentNode)
-                    visitedNodes.add(currentNode)
-
-                if edges[currentNode]:
-                    if(prevEdge):
-                        edges[currentNode] = self.__sortedEdgesByAngle(prevEdge, edges[currentNode])
-                    edge = edges[currentNode][0]
-                    if edge not in visitedEdges and (edge[1], edge[0]) not in visitedEdges:
-                        visitedEdges.add(edge)
-                        # Mark the traversed "to" node as to-be-explored.
-                        stack.append(edge[1])
-                        dfsEdges.append(edge)
-                        prevEdge = edge
-                    edges[currentNode].pop(0)
-                else:
-                    # No more edges from the current node.
-                    stack.pop()
-                    prevEdge = None
-
-        return dfsEdges
-"""
-
 
 class OptimizePaths(inkex.GenerateExtension):
     def __init__(self):
@@ -176,9 +41,9 @@ class OptimizePaths(inkex.GenerateExtension):
         self.arg_parser.add_argument("-l", "--enableLog", type=inkex.Boolean,
                                      dest="enableLog", default=False,
                                      help="Enable logging")
-        self.arg_parser.add_argument("-o", "--overwriteRule", type=int,
-                                     dest="overwriteRule", default=1,
-                                     help="Options to control edge overwrite rules")
+        self.arg_parser.add_argument("-o", "--allowTraceback", type=inkex.Boolean,
+                                     dest="allowTraceback", default=True,
+                                     help="Allow edges to be traced multiple times, leading to a single path")
 
     def parseSVG(self):
         vertices = []
@@ -290,11 +155,11 @@ class OptimizePaths(inkex.GenerateExtension):
             if isEdgeDuplicate and i == len(edges) - 1:
                 edgeRangeToRemove.append((duplicatePathStartIndex, i))
 
-        if self.options.overwriteRule == OVERWRITE_ALLOW:
+        if self.options.allowTraceback:
             # The last duplicate path can always be removed
             edgeRangeToRemove = [edgeRangeToRemove[-1]] if edgeRangeToRemove else []
-        elif self.options.overwriteRule == OVERWRITE_ALLOW_SOME:  # Allow overwrite except for long paths
-            edgeRangeToRemove = [x for x in edgeRangeToRemove if x[1] - x[0] > MAX_CONSECUTIVE_OVERWRITE_EDGE]
+        #elif self.options.overwriteRule == OVERWRITE_ALLOW_SOME:  # Allow overwrite except for long paths
+            #edgeRangeToRemove = [x for x in edgeRangeToRemove if x[1] - x[0] > MAX_CONSECUTIVE_OVERWRITE_EDGE]
 
         indicesToRemove = set()
         for start, end in edgeRangeToRemove:
@@ -348,7 +213,7 @@ class OptimizePaths(inkex.GenerateExtension):
                     paths.append(path)
                     path = []
 
-        if self.options.overwriteRule == OVERWRITE_ALLOW:
+        if self.options.allowTraceback:
             assert len(paths) == 1
 
         # paths.sort(key=len, reverse=True)
@@ -447,7 +312,7 @@ class OptimizePaths(inkex.GenerateExtension):
 
         return G2
 
-    #Adapted from NetworkX https://networkx.github.io/documentation/stable/_modules/networkx/algorithms/euler.html#eulerize
+    # Adapted from NetworkX https://networkx.github.io/documentation/stable/_modules/networkx/algorithms/euler.html#eulerize
     def make_semi_eulerian(self, G):
         if G.order() == 0:
             raise nx.NetworkXPointlessConcept("Cannot Eulerize null graph")
@@ -477,9 +342,8 @@ class OptimizePaths(inkex.GenerateExtension):
 
         # We can remove on of the paths to have a semi-eulerian graph, we choose the longest path
         longest_path_edge = max(best_matching.edges(), key=lambda e: len(Gp[e[0]][e[1]]['path']))
-        self.log(str(longest_path_edge) + " " + str(Gp[longest_path_edge[0]][longest_path_edge[1]]['path']))
+        #self.log(str(longest_path_edge) + " " + str(Gp[longest_path_edge[0]][longest_path_edge[1]]['path']))
         best_matching.remove_edge(longest_path_edge[0], longest_path_edge[1])
-
 
         # duplicate each edge along each path in the set of paths in Gp
         for m, n in best_matching.edges():
@@ -513,19 +377,26 @@ class OptimizePaths(inkex.GenerateExtension):
     def _getNodePosition(self, G, n):
         return (G.nodes[n]['x'], G.nodes[n]['y'])
 
+    # Favor edges that are in the same direction to avoid changing direction if not necessary
     def _getBestEdge(self, G, previousEdge, edges):
-        previousEdgeVectNormalized = numpy.array(self._getNodePosition(G, previousEdge[1])) - numpy.array(
-            self._getNodePosition(G, previousEdge[0]))
-        # self.log(str(numpy.linalg.norm(previousEdgeVectNormalized)) + " " + str(previousEdge[1]) + " " + str(previousEdge[0]))
+
+        # If we have the choice, remove the extra node (with index -1) from the options, so that it's visited last
+        if len(edges) > 1:
+            edges = [e for e in edges if e[1] is not -1]
+
+        # Get the direction where we came from to favor edges that are in the same direction
+        previousEdgeVectNormalized = numpy.array(self._getNodePosition(G, previousEdge[1])) - \
+                                     numpy.array(self._getNodePosition(G, previousEdge[0]))
         previousEdgeVectNormalized = previousEdgeVectNormalized / numpy.linalg.norm(previousEdgeVectNormalized)
 
-        # previousEdgeVectNormalized = numpy.array((0,1))
+        # Sort edges by dot product (cosine of the angle)
         def angleKey(outEdge):
             edgeVectNormalized = numpy.array(self._getNodePosition(G, outEdge[1])) - numpy.array(
                 self._getNodePosition(G, outEdge[0]))
             edgeVectNormalized = edgeVectNormalized / numpy.linalg.norm(edgeVectNormalized)
             return numpy.dot(previousEdgeVectNormalized, edgeVectNormalized)
 
+        # Return the edge with the biggest dot product (smallest angle deviation)
         return max(edges, key=angleKey)
 
 
@@ -601,21 +472,29 @@ class OptimizePaths(inkex.GenerateExtension):
         makeEulerianDuration = 0
         for connectedGraph in connectedGraphs:
             timerStart = timeit.default_timer()
-            if self.options.overwriteRule == OVERWRITE_ALLOW_NONE:
-                connectedGraph = self.makeEulerianGraphExtraNode(connectedGraph)
-                #connectedGraph = nx.eulerize(connectedGraph)
-            else:
-                #connectedGraph = self.makeEulerianGraph(connectedGraph)
-                connectedGraph = self.make_semi_eulerian(connectedGraph)
-            timerStop = timeit.default_timer()
-            makeEulerianDuration += timerStop - timerStart
-            # connectedGraph is now likely a multigraph
+            timerStop = timerStart
+            pathEdges = {}
 
-            finalEdgeCount = finalEdgeCount + nx.number_of_edges(connectedGraph)
-            pathEdges = list(nx.eulerian_path(connectedGraph))
-            #pathEdges = self.eulerian_circuit_hierholzer(connectedGraph)
-            #pathEdges = self.removeSomeEdges(connectedGraph, pathEdges)
-            #pathEdges = self.shiftEdgesToBreak(pathEdges)
+            if not self.options.allowTraceback:# Break into multiple paths
+                connectedGraph = self.makeEulerianGraphExtraNode(connectedGraph)
+                timerStop = timeit.default_timer()
+                makeEulerianDuration += timerStop - timerStart
+                # connectedGraph is now likely a multigraph
+
+                finalEdgeCount = finalEdgeCount + nx.number_of_edges(connectedGraph)
+
+                pathEdges = self.eulerian_circuit_hierholzer(connectedGraph)
+                pathEdges = self.removeSomeEdges(connectedGraph, pathEdges)
+                pathEdges = self.shiftEdgesToBreak(pathEdges)
+            else:# Single path
+                connectedGraph = self.make_semi_eulerian(connectedGraph)
+                timerStop = timeit.default_timer()
+                makeEulerianDuration += timerStop - timerStart
+                # connectedGraph is now likely a multigraph
+
+                finalEdgeCount = finalEdgeCount + nx.number_of_edges(connectedGraph)
+
+                pathEdges = list(nx.eulerian_path(connectedGraph))
 
             paths.extend(self.edgesToPaths(pathEdges))
 

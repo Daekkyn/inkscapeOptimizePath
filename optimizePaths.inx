@@ -4,11 +4,7 @@
        <dependency type="executable" location="extensions">optimizePaths.py</dependency>
        <dependency type="executable" location="extensions">inkex.py</dependency>
      	 <param name="tolerance" type="float" min="0.0" max="100.0" _gui-text="Merge Tolerance:">0.10</param>
-       <param name="overwriteRule" type="optiongroup" appearance="radio" gui-text="Traceback:">
-           <item value="0">Allow</item>
-           <item value="1">Allow some</item>
-           <item value="2">Allow none</item>
-       </param>
+       <param name="allowTraceback" type="bool" _gui-text="Allow traceback">true</param>
        <param name="enableLog" type="bool" _gui-text="Debug">false</param>
 
    <effect>
